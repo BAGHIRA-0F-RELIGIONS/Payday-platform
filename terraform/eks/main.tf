@@ -362,23 +362,6 @@ resource "aws_s3_bucket_lifecycle_configuration" "velero" {
   }
 }
 
-# DynamoDB table for Terraform state locking — prevents two concurrent
-# terraform applies from corrupting the state file.
-resource "aws_dynamodb_table" "terraform_lock" {
-  name         = "payday-terraform-lock"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
-
-  tags = {
-    Name    = "payday-terraform-lock"
-    Purpose = "terraform-state-locking"
-  }
-}
 
 # IAM policy: gives Velero permission to read/write only under the velero/ prefix
 resource "aws_iam_policy" "velero" {
