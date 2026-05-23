@@ -1,40 +1,54 @@
-# Helm values for Grafana Loki (centralized log aggregation)
-# Loki collects logs from ALL pods and makes them searchable in Grafana.
+# Helm values for grafana/loki chart — single-binary mode on EKS
 #
-# Install with:
+# Install:
 #   helm repo add grafana https://grafana.github.io/helm-charts
 #   helm repo update
-#   helm install loki grafana/loki-stack \
-#     --namespace monitoring \
+#   helm upgrade --install loki grafana/loki \
+#     --namespace monitoring --create-namespace \
 #     --values k8s/observability/loki-values.yaml
+#
+# Then install Promtail (log collector):
+#   helm upgrade --install promtail grafana/promtail \
+#     --namespace monitoring \
+#     --set config.clients[0].url=http://loki:3100/loki/api/v1/push
+
+deploymentMode: SingleBinary
 
 loki:
-  enabled: true
+  auth_enabled: false
+
+  commonConfig:
+    replication_factor: 1
+
+  schemaConfig:
+    configs:
+      - from: "2024-01-01"
+        store: tsdb
+        object_store: filesystem
+        schema: v13
+        index:
+          prefix: index_
+          period: 24h
+
+  storage:
+    type: filesystem
+
+  limits_config:
+    retention_period: 720h      # 30 days
+    ingestion_rate_mb: 16
+    ingestion_burst_size_mb: 32
+    max_query_series: 10000
+
+  compactor:
+    retention_enabled: true
+    retention_delete_delay: 2h
+
+singleBinary:
+  replicas: 1
   persistence:
     enabled: true
+    storageClass: gp2            # AWS EKS EBS storage class
     size: 10Gi
-    storageClassName: standard
-  config:
-    schema_config:
-      configs:
-        - from: 2024-01-01
-          store: boltdb-shipper
-          object_store: filesystem
-          schema: v11
-          index:
-            prefix: index_
-            period: 24h
-    storage_config:
-      boltdb_shipper:
-        active_index_directory: /data/loki/index
-        cache_location: /data/loki/index_cache
-        shared_store: filesystem
-      filesystem:
-        directory: /data/loki/chunks
-    limits_config:
-      retention_period: 720h   # Keep logs for 30 days
-      ingestion_rate_mb: 16
-      ingestion_burst_size_mb: 32
   resources:
     requests:
       cpu: 200m
@@ -43,31 +57,25 @@ loki:
       cpu: 1000m
       memory: 1Gi
 
-# Promtail — runs on every node, collects pod logs and sends to Loki
-promtail:
-  enabled: true
-  config:
-    clients:
-      - url: http://loki:3100/loki/api/v1/push
-    snippets:
-      pipelineStages:
-        # Add Kubernetes labels to every log line (pod name, namespace, etc.)
-        - kubernetes: {}
-        # Add namespace label for easy filtering
-        - labels:
-            app:
-            namespace:
-            pod:
-            container:
-  resources:
-    requests:
-      cpu: 50m
-      memory: 64Mi
-    limits:
-      cpu: 200m
-      memory: 256Mi
+# Disable components not needed for single-binary mode
+gateway:
+  enabled: false
 
-# Grafana is already installed by kube-prometheus-stack,
-# so we set this to false to avoid a duplicate Grafana install.
-grafana:
+backend:
+  replicas: 0
+read:
+  replicas: 0
+write:
+  replicas: 0
+
+# Disable self-monitoring to keep it simple
+monitoring:
+  selfMonitoring:
+    enabled: false
+    grafanaAgent:
+      installOperator: false
+  lokiCanary:
+    enabled: false
+
+test:
   enabled: false

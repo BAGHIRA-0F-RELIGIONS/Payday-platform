@@ -30,7 +30,7 @@ prometheus:
     storageSpec:
       volumeClaimTemplate:
         spec:
-          storageClassName: standard
+          storageClassName: gp2
           accessModes: [ReadWriteOnce]
           resources:
             requests:
@@ -71,10 +71,15 @@ grafana:
   ingress:
     enabled: true
     ingressClassName: nginx
-    hosts:
-      - grafana.payday.example.com         # Update to your domain
+    path: /grafana
+    pathType: Prefix
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana"
+      serve_from_sub_path: true
   persistence:
     enabled: true
+    storageClassName: gp2
     size: 5Gi
   # Auto-load our custom dashboards
   dashboardProviders:
@@ -88,6 +93,13 @@ grafana:
             path: /var/lib/grafana/dashboards/payday
   dashboardsConfigMaps:
     payday: payday-grafana-dashboard
+  # Pre-wire Loki as a data source so logs appear automatically
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      url: http://loki.monitoring.svc.cluster.local:3100
+      access: proxy
+      isDefault: false
 
 # ── Alertmanager settings ─────────────────────────────────────────────────────
 alertmanager:
