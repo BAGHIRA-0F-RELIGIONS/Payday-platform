@@ -78,6 +78,22 @@ jobs:
       - name: Apply namespaces
         run: kubectl apply -f k8s/namespaces/namespaces.yaml
 
+      - name: Install cert-manager
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm repo update
+          helm upgrade --install cert-manager jetstack/cert-manager \
+            --namespace cert-manager --create-namespace \
+            --set installCRDs=true \
+            --wait --timeout 5m
+
+      - name: Apply TLS issuer and certificate
+        run: |
+          kubectl apply -f k8s/ingress/cert-manager-issuer.yaml
+          # Wait for cert-manager to issue the certificate (creates the TLS secret)
+          kubectl wait --for=condition=Ready certificate/payday-staging-tls \
+            -n staging --timeout=120s
+
       # Create/update Kubernetes secrets in staging namespace from GitHub Secrets
       - name: Create staging secrets
         run: |
