@@ -74,6 +74,10 @@ jobs:
         id: tag
         run: echo "IMAGE_TAG=sha-$(echo ${{ github.sha }} | head -c 7)" >> $GITHUB_OUTPUT
 
+      # Namespaces must exist before anything else (secrets, deployments, etc.)
+      - name: Apply namespaces
+        run: kubectl apply -f k8s/namespaces/namespaces.yaml
+
       # Create/update Kubernetes secrets in staging namespace from GitHub Secrets
       - name: Create staging secrets
         run: |
@@ -99,9 +103,6 @@ jobs:
 
           echo "Set image tag: ${TAG}"
           echo "Registry: ${REGISTRY}"
-
-      - name: Apply namespaces
-        run: kubectl apply -f k8s/namespaces/namespaces.yaml
 
       # For staging: use in-cluster PostgreSQL (not RDS, to save costs in staging)
       - name: Deploy database to staging
