@@ -3,7 +3,7 @@ import uuid
 import logging
 from datetime import datetime
 from flask import Flask, jsonify, request, abort
-from prometheus_flask_exporter import PrometheusFlaskExporter
+from prometheus_flask_exporter import PrometheusMetrics
 import psycopg2
 import psycopg2.extras
 
@@ -11,7 +11,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
-metrics = PrometheusFlaskExporter(app, group_by="endpoint")
+metrics = PrometheusMetrics(app, group_by="endpoint")
 
 # ── Database ──────────────────────────────────────────────────────────────────
 def get_db():
