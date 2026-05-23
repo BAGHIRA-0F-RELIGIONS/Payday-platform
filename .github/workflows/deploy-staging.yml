@@ -83,13 +83,21 @@ jobs:
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
 
-          # If cert-manager exists but was NOT installed by Helm (e.g. via kubectl apply),
-          # Helm cannot import it. Delete the namespace so Helm can install cleanly.
+          # If cert-manager exists but was NOT installed by Helm, clean it up.
+          # CRDs are cluster-scoped and survive namespace deletion — must delete separately.
           if kubectl get namespace cert-manager &>/dev/null && \
              ! helm status cert-manager -n cert-manager &>/dev/null; then
             echo "cert-manager found but not Helm-managed — removing for clean install"
             kubectl delete namespace cert-manager
             kubectl wait --for=delete namespace/cert-manager --timeout=120s
+            kubectl delete crd \
+              certificaterequests.cert-manager.io \
+              certificates.cert-manager.io \
+              challenges.acme.cert-manager.io \
+              clusterissuers.cert-manager.io \
+              issuers.cert-manager.io \
+              orders.acme.cert-manager.io \
+              --ignore-not-found=true
           fi
 
           helm upgrade --install cert-manager jetstack/cert-manager \
