@@ -1,6 +1,9 @@
 # Nginx-based frontend — serves static files and proxies to backend APIs
 FROM nginx:1.27-alpine
 
+# Upgrade all Alpine packages to pull in the latest security patches
+RUN apk upgrade --no-cache
+
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
 
