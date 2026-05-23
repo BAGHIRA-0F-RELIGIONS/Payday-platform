@@ -17,19 +17,3 @@ spec:
       targetPort: 8081
   type: ClusterIP  # Only accessible inside the cluster
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: auth-api
-  namespace: production
-  labels:
-    app: auth-api
-spec:
-  selector:
-    app: auth-api
-  ports:
-    - name: http
-      port: 8081
-      targetPort: 8081
-  type: ClusterIP
