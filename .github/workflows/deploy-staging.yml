@@ -156,29 +156,38 @@ jobs:
         run: |
           echo "Running smoke tests..."
 
-          kubectl port-forward svc/payments-api 8082:8082 -n staging &
-          PF_PID=$!
-          sleep 5
+          # Spin up a curl pod inside the cluster — reaches services via K8s DNS,
+          # no port-forwarding needed (port-forward is for interactive use, not CI).
+          kubectl run smoke-test --image=curlimages/curl:8.7.1 \
+            --restart=Never -n staging \
+            --command -- sleep 60
 
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8082/health)
+          kubectl wait --for=condition=Ready pod/smoke-test \
+            -n staging --timeout=60s
+
+          # Test payments-api health
+          HTTP=$(kubectl exec -n staging smoke-test -- \
+            curl -s -o /dev/null -w "%{http_code}" http://payments-api:8082/health)
           if [ "$HTTP" != "200" ]; then
             echo "FAIL: payments-api health returned $HTTP"
-            kill $PF_PID 2>/dev/null; exit 1
+            kubectl delete pod smoke-test -n staging --ignore-not-found=true
+            exit 1
           fi
           echo "✓ payments-api health OK"
 
-          kubectl port-forward svc/auth-api 8081:8081 -n staging &
-          PF_PID2=$!
-          sleep 3
-
-          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/health)
+          # Test auth-api health
+          HTTP=$(kubectl exec -n staging smoke-test -- \
+            curl -s -o /dev/null -w "%{http_code}" http://auth-api:8081/health)
           if [ "$HTTP" != "200" ]; then
             echo "FAIL: auth-api health returned $HTTP"
-            kill $PF_PID2 2>/dev/null; exit 1
+            kubectl delete pod smoke-test -n staging --ignore-not-found=true
+            exit 1
           fi
           echo "✓ auth-api health OK"
 
-          LOGIN=$(curl -s -X POST http://localhost:8081/auth/login \
+          # Test login endpoint
+          LOGIN=$(kubectl exec -n staging smoke-test -- \
+            curl -s -X POST http://auth-api:8081/auth/login \
             -H "Content-Type: application/json" \
             -d '{"username":"admin","password":"password123"}')
           if echo "$LOGIN" | grep -q "token"; then
@@ -186,10 +195,11 @@ jobs:
           else
             echo "FAIL: Login did not return a token"
             echo "Response: $LOGIN"
+            kubectl delete pod smoke-test -n staging --ignore-not-found=true
             exit 1
           fi
 
-          kill $PF_PID $PF_PID2 2>/dev/null
+          kubectl delete pod smoke-test -n staging --ignore-not-found=true
           echo "All smoke tests passed!"
 
       - name: Rollback on failure
