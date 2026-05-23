@@ -1,46 +1,31 @@
-# NGINX Ingress Controller routes external HTTP traffic to the correct service.
-# Think of it as a reverse proxy / load balancer at the edge of the cluster.
+# NGINX Ingress Controller routes all external traffic to the frontend.
+# The frontend's nginx.conf already proxies /api/payments/* and /api/auth/*
+# to the correct backend services with the correct path rewrites — exactly
+# the same way docker-compose works locally.
 #
 # Traffic flow:
-#   Internet → Ingress (NGINX) → frontend service (for /)
-#                               → payments-api service (for /api/payments)
-#                               → auth-api service (for /api/auth)
+#   Internet → Ingress → frontend (port 80)
+#                          ↳ /api/payments/* → payments-api:8082
+#                          ↳ /api/auth/*     → auth-api:8081
+#                          ↳ /*              → static HTML
 #
-# Install NGINX Ingress Controller with:
+# Install NGINX Ingress Controller:
 #   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
 
 ---
-# ── Staging Ingress ───────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: payday-ingress
   namespace: staging
   annotations:
-    nginx.ingress.kubernetes.io/rewrite-target:  /
-    nginx.ingress.kubernetes.io/proxy-body-size:  "10m"
+    nginx.ingress.kubernetes.io/proxy-body-size:    "10m"
     nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
-    nginx.ingress.kubernetes.io/rate-limit-connections: "100"
 spec:
   ingressClassName: nginx
   rules:
-    - host: staging.payday.example.com    # Change to your actual domain
-      http:
+    - http:
         paths:
-          - path: /api/auth
-            pathType: Prefix
-            backend:
-              service:
-                name: auth-api
-                port:
-                  number: 8081
-          - path: /api/payments
-            pathType: Prefix
-            backend:
-              service:
-                name: payments-api
-                port:
-                  number: 8082
           - path: /
             pathType: Prefix
             backend:
