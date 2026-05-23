@@ -107,8 +107,8 @@ jobs:
       # For staging: use in-cluster PostgreSQL (not RDS, to save costs in staging)
       - name: Deploy database to staging
         run: |
-          kubectl apply -f k8s/database/postgres-statefulset.yaml -n staging
-          kubectl rollout status statefulset/postgres -n staging --timeout=120s
+          kubectl apply -f k8s/database/postgres-statefulset.yaml --namespace staging
+          kubectl rollout status statefulset/postgres -n staging --timeout=300s
 
       - name: Deploy apps to staging
         run: |
