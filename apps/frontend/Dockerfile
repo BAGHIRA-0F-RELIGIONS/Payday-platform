@@ -1,5 +1,5 @@
 # Nginx-based frontend — serves static files and proxies to backend APIs
-FROM nginx:1.25-alpine
+FROM nginx:1.27-alpine
 
 # Remove default nginx config
 RUN rm /etc/nginx/conf.d/default.conf
