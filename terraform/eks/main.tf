@@ -296,21 +296,29 @@ resource "aws_db_instance" "payday" {
   }
 }
 
-# ── S3 Bucket for Velero Backups ──────────────────────────────────────────────
-# Velero backs up all Kubernetes resources and EBS volume snapshots to this bucket.
-resource "aws_s3_bucket" "velero" {
-  bucket        = "${var.cluster_name}-velero-backups-${data.aws_caller_identity.current.account_id}"
-  force_destroy = false   # Prevents accidental deletion of backup data
+# ── Shared S3 Bucket (Terraform state + Velero backups) ───────────────────────
+# Single bucket with prefix-based separation:
+#   terraform/eks/terraform.tfstate  — Terraform remote state
+#   velero/                          — Velero cluster backups
+#
+# Bootstrap (run once before terraform init):
+#   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
+#   aws s3 mb s3://payday-platform-${ACCOUNT} --region us-east-1
+#   aws s3api put-bucket-versioning \
+#     --bucket payday-platform-${ACCOUNT} \
+#     --versioning-configuration Status=Enabled
+resource "aws_s3_bucket" "platform_storage" {
+  bucket        = "payday-platform-${data.aws_caller_identity.current.account_id}"
+  force_destroy = false
 
   tags = {
-    Name    = "${var.cluster_name}-velero-backups"
-    Purpose = "kubernetes-backups"
+    Name    = "payday-platform-storage"
+    Purpose = "terraform-state-and-velero-backups"
   }
 }
 
-# Block all public access — backups must never be publicly readable
-resource "aws_s3_bucket_public_access_block" "velero" {
-  bucket = aws_s3_bucket.velero.id
+resource "aws_s3_bucket_public_access_block" "platform_storage" {
+  bucket = aws_s3_bucket.platform_storage.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -318,9 +326,8 @@ resource "aws_s3_bucket_public_access_block" "velero" {
   restrict_public_buckets = true
 }
 
-# Encrypt all backup files at rest using AES-256
-resource "aws_s3_bucket_server_side_encryption_configuration" "velero" {
-  bucket = aws_s3_bucket.velero.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "platform_storage" {
+  bucket = aws_s3_bucket.platform_storage.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -329,15 +336,28 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "velero" {
   }
 }
 
-# Lifecycle rule: auto-delete backups older than 90 days to save storage costs
-resource "aws_s3_bucket_lifecycle_configuration" "velero" {
-  bucket = aws_s3_bucket.velero.id
+# Versioning is required for Terraform state — lets you recover from accidental
+# state corruption or deletion by rolling back to a previous version.
+resource "aws_s3_bucket_versioning" "platform_storage" {
+  bucket = aws_s3_bucket.platform_storage.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+# Expire only velero/ objects after 90 days — Terraform state must never be
+# auto-deleted, so the lifecycle rule is scoped to the velero/ prefix only.
+resource "aws_s3_bucket_lifecycle_configuration" "platform_storage" {
+  bucket = aws_s3_bucket.platform_storage.id
+  depends_on = [aws_s3_bucket_versioning.platform_storage]
 
   rule {
-    id     = "expire-old-backups"
+    id     = "expire-old-velero-backups"
     status = "Enabled"
 
-    filter {}   # Empty filter = apply rule to ALL objects in the bucket
+    filter {
+      prefix = "velero/"
+    }
 
     expiration {
       days = 90
@@ -349,7 +369,25 @@ resource "aws_s3_bucket_lifecycle_configuration" "velero" {
   }
 }
 
-# IAM policy: gives Velero permission to read/write this S3 bucket
+# DynamoDB table for Terraform state locking — prevents two concurrent
+# terraform applies from corrupting the state file.
+resource "aws_dynamodb_table" "terraform_lock" {
+  name         = "payday-terraform-lock"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "LockID"
+
+  attribute {
+    name = "LockID"
+    type = "S"
+  }
+
+  tags = {
+    Name    = "payday-terraform-lock"
+    Purpose = "terraform-state-locking"
+  }
+}
+
+# IAM policy: gives Velero permission to read/write only under the velero/ prefix
 resource "aws_iam_policy" "velero" {
   name        = "${var.cluster_name}-velero-policy"
   description = "Allows Velero to backup/restore K8s resources to S3 and take EBS snapshots"
@@ -366,12 +404,12 @@ resource "aws_iam_policy" "velero" {
           "s3:AbortMultipartUpload",
           "s3:ListMultipartUploadParts"
         ]
-        Resource = "${aws_s3_bucket.velero.arn}/*"
+        Resource = "${aws_s3_bucket.platform_storage.arn}/velero/*"
       },
       {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
-        Resource = aws_s3_bucket.velero.arn
+        Resource = aws_s3_bucket.platform_storage.arn
       },
       {
         Effect = "Allow"
