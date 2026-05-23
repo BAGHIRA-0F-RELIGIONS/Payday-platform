@@ -6,22 +6,6 @@
 # See terraform/eks/main.tf for the RDS resource.
 
 ---
-# ── StorageClass: gp3 (EBS CSI driver — faster and cheaper than gp2) ─────────
-# EKS creates gp2 by default but not gp3. This defines it so PVCs can use it.
-apiVersion: storage.k8s.io/v1
-kind: StorageClass
-metadata:
-  name: gp3
-  annotations:
-    storageclass.kubernetes.io/is-default-class: "false"
-provisioner: ebs.csi.aws.com
-volumeBindingMode: WaitForFirstConsumer  # Only provision EBS when pod is scheduled
-reclaimPolicy: Retain
-parameters:
-  type: gp3
-  encrypted: "true"
-
----
 # ── Storage: Request 10Gi persistent disk ────────────────────────────────────
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -33,7 +17,7 @@ spec:
   resources:
     requests:
       storage: 10Gi
-  storageClassName: gp3  # AWS EKS recommended storage class (EBS CSI driver)
+  storageClassName: gp2  # Matches the existing bound PVC — cannot change after creation
 
 ---
 # ── StatefulSet ───────────────────────────────────────────────────────────────
