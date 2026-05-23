@@ -1,0 +1,189 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CD PIPELINE — Deploy to STAGING (AWS EKS)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# What this does:
+#   1. Triggered when CI pipeline succeeds on main branch
+#   2. Authenticates to AWS and configures kubectl for EKS
+#   3. Creates/updates secrets in the staging namespace
+#   4. Substitutes image tags in Kubernetes manifests
+#   5. Deploys all services to the staging namespace
+#   6. Waits for rollouts to complete
+#   7. Runs smoke tests — rolls back automatically if they fail
+#
+# GitHub Secrets needed:
+#   AWS_ACCESS_KEY_ID      → AWS IAM access key
+#   AWS_SECRET_ACCESS_KEY  → AWS IAM secret key
+#   AWS_REGION             → e.g. us-east-1
+#   AWS_ACCOUNT_ID         → 12-digit AWS account ID
+#   EKS_CLUSTER_NAME       → e.g. payday-cluster
+#   DB_PASSWORD            → RDS/Postgres password for staging
+#   JWT_SECRET             → JWT signing secret
+
+name: CD — Deploy to Staging
+
+on:
+  workflow_run:
+    workflows: ["CI — Build, Test, Scan, Push"]
+    types: [completed]
+    branches: [main]
+
+jobs:
+  deploy-staging:
+    name: Deploy to Staging (EKS)
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    environment:
+      name: staging
+      url: https://staging.payday.example.com
+
+    env:
+      ECR_REGISTRY: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ secrets.AWS_REGION }}
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: "v1.29.0"
+
+      - name: Install Argo Rollouts kubectl plugin
+        run: |
+          curl -LO https://github.com/argoproj/argo-rollouts/releases/latest/download/kubectl-argo-rollouts-linux-amd64
+          chmod +x kubectl-argo-rollouts-linux-amd64
+          sudo mv kubectl-argo-rollouts-linux-amd64 /usr/local/bin/kubectl-argo-rollouts
+
+      # Configure kubectl to connect to your EKS cluster
+      - name: Connect kubectl to EKS
+        run: |
+          aws eks update-kubeconfig \
+            --name ${{ secrets.EKS_CLUSTER_NAME }} \
+            --region ${{ secrets.AWS_REGION }}
+
+      - name: Set image tag
+        id: tag
+        run: echo "IMAGE_TAG=sha-$(echo ${{ github.sha }} | head -c 7)" >> $GITHUB_OUTPUT
+
+      # Create/update Kubernetes secrets in staging namespace from GitHub Secrets
+      - name: Create staging secrets
+        run: |
+          kubectl create secret generic postgres-secret \
+            --from-literal=POSTGRES_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+            --from-literal=DATABASE_URL="postgres://payday:${{ secrets.DB_PASSWORD }}@${{ secrets.RDS_ENDPOINT }}/payday?sslmode=require" \
+            --namespace staging \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          kubectl create secret generic app-secrets \
+            --from-literal=JWT_SECRET="${{ secrets.JWT_SECRET }}" \
+            --namespace staging \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      # Replace IMAGE_TAG and ECR_REGISTRY placeholders in all manifest files
+      - name: Substitute image tags
+        run: |
+          TAG="${{ steps.tag.outputs.IMAGE_TAG }}"
+          REGISTRY="${{ env.ECR_REGISTRY }}"
+
+          find k8s/ -name "*.yaml" -exec \
+            sed -i "s|ghcr.io/GITHUB_OWNER|${REGISTRY}|g; s|IMAGE_TAG|${TAG}|g" {} \;
+
+          echo "Set image tag: ${TAG}"
+          echo "Registry: ${REGISTRY}"
+
+      - name: Apply namespaces
+        run: kubectl apply -f k8s/namespaces/namespaces.yaml
+
+      # For staging: use in-cluster PostgreSQL (not RDS, to save costs in staging)
+      - name: Deploy database to staging
+        run: |
+          kubectl apply -f k8s/database/postgres-statefulset.yaml -n staging
+          kubectl rollout status statefulset/postgres -n staging --timeout=120s
+
+      - name: Deploy apps to staging
+        run: |
+          kubectl apply -f k8s/apps/auth-api/deployment.yaml      -n staging
+          kubectl apply -f k8s/apps/auth-api/service.yaml
+          kubectl apply -f k8s/apps/auth-api/hpa.yaml
+
+          kubectl apply -f k8s/apps/payments-api/deployment.yaml  -n staging
+          kubectl apply -f k8s/apps/payments-api/service.yaml
+          kubectl apply -f k8s/apps/payments-api/hpa.yaml
+
+          kubectl apply -f k8s/apps/worker/deployment.yaml        -n staging
+          kubectl apply -f k8s/apps/frontend/deployment.yaml      -n staging
+          kubectl apply -f k8s/apps/frontend/service.yaml
+
+      - name: Apply ingress
+        run: kubectl apply -f k8s/ingress/ingress.yaml -n staging
+
+      - name: Apply resource quotas
+        run: kubectl apply -f k8s/autoscaling/resource-quotas.yaml
+
+      - name: Wait for rollouts to complete
+        run: |
+          echo "Waiting for staging deployments to be ready..."
+          kubectl rollout status deployment/auth-api     -n staging --timeout=180s
+          kubectl rollout status deployment/payments-api -n staging --timeout=180s
+          kubectl rollout status deployment/worker       -n staging --timeout=180s
+          kubectl rollout status deployment/frontend     -n staging --timeout=180s
+          echo "All deployments ready!"
+
+      - name: Run smoke tests
+        run: |
+          echo "Running smoke tests..."
+
+          kubectl port-forward svc/payments-api 8082:8082 -n staging &
+          PF_PID=$!
+          sleep 5
+
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8082/health)
+          if [ "$HTTP" != "200" ]; then
+            echo "FAIL: payments-api health returned $HTTP"
+            kill $PF_PID 2>/dev/null; exit 1
+          fi
+          echo "✓ payments-api health OK"
+
+          kubectl port-forward svc/auth-api 8081:8081 -n staging &
+          PF_PID2=$!
+          sleep 3
+
+          HTTP=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8081/health)
+          if [ "$HTTP" != "200" ]; then
+            echo "FAIL: auth-api health returned $HTTP"
+            kill $PF_PID2 2>/dev/null; exit 1
+          fi
+          echo "✓ auth-api health OK"
+
+          LOGIN=$(curl -s -X POST http://localhost:8081/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"admin","password":"password123"}')
+          if echo "$LOGIN" | grep -q "token"; then
+            echo "✓ Login endpoint works"
+          else
+            echo "FAIL: Login did not return a token"
+            echo "Response: $LOGIN"
+            exit 1
+          fi
+
+          kill $PF_PID $PF_PID2 2>/dev/null
+          echo "All smoke tests passed!"
+
+      - name: Rollback on failure
+        if: failure()
+        run: |
+          echo "Rolling back staging..."
+          kubectl rollout undo deployment/auth-api     -n staging
+          kubectl rollout undo deployment/payments-api -n staging
+          kubectl rollout undo deployment/worker       -n staging
+          kubectl rollout undo deployment/frontend     -n staging
+          echo "Rollback complete."

@@ -1,0 +1,73 @@
+# Helm values for Grafana Loki (centralized log aggregation)
+# Loki collects logs from ALL pods and makes them searchable in Grafana.
+#
+# Install with:
+#   helm repo add grafana https://grafana.github.io/helm-charts
+#   helm repo update
+#   helm install loki grafana/loki-stack \
+#     --namespace monitoring \
+#     --values k8s/observability/loki-values.yaml
+
+loki:
+  enabled: true
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClassName: standard
+  config:
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: boltdb-shipper
+          object_store: filesystem
+          schema: v11
+          index:
+            prefix: index_
+            period: 24h
+    storage_config:
+      boltdb_shipper:
+        active_index_directory: /data/loki/index
+        cache_location: /data/loki/index_cache
+        shared_store: filesystem
+      filesystem:
+        directory: /data/loki/chunks
+    limits_config:
+      retention_period: 720h   # Keep logs for 30 days
+      ingestion_rate_mb: 16
+      ingestion_burst_size_mb: 32
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+
+# Promtail — runs on every node, collects pod logs and sends to Loki
+promtail:
+  enabled: true
+  config:
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+    snippets:
+      pipelineStages:
+        # Add Kubernetes labels to every log line (pod name, namespace, etc.)
+        - kubernetes: {}
+        # Add namespace label for easy filtering
+        - labels:
+            app:
+            namespace:
+            pod:
+            container:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+# Grafana is already installed by kube-prometheus-stack,
+# so we set this to false to avoid a duplicate Grafana install.
+grafana:
+  enabled: false

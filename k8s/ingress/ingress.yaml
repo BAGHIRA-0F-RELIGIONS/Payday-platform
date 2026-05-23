@@ -1,0 +1,93 @@
+# NGINX Ingress Controller routes external HTTP traffic to the correct service.
+# Think of it as a reverse proxy / load balancer at the edge of the cluster.
+#
+# Traffic flow:
+#   Internet → Ingress (NGINX) → frontend service (for /)
+#                               → payments-api service (for /api/payments)
+#                               → auth-api service (for /api/auth)
+#
+# Install NGINX Ingress Controller with:
+#   kubectl apply -f https://raw.githubusercontent.com/kubernetes/ingress-nginx/controller-v1.10.1/deploy/static/provider/cloud/deploy.yaml
+
+---
+# ── Staging Ingress ───────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: payday-ingress
+  namespace: staging
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target:  /
+    nginx.ingress.kubernetes.io/proxy-body-size:  "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "100"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: staging.payday.example.com    # Change to your actual domain
+      http:
+        paths:
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-api
+                port:
+                  number: 8081
+          - path: /api/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payments-api
+                port:
+                  number: 8082
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
+
+---
+# ── Production Ingress ────────────────────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: payday-ingress
+  namespace: production
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target:  /
+    nginx.ingress.kubernetes.io/proxy-body-size:  "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "30"
+    nginx.ingress.kubernetes.io/rate-limit-connections: "200"
+    # Canary annotation — uncomment when routing canary traffic
+    # nginx.ingress.kubernetes.io/canary: "true"
+    # nginx.ingress.kubernetes.io/canary-weight: "10"
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: payday.example.com    # Change to your actual domain
+      http:
+        paths:
+          - path: /api/auth
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-api
+                port:
+                  number: 8081
+          - path: /api/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: payments-api
+                port:
+                  number: 8082
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: frontend
+                port:
+                  number: 80
