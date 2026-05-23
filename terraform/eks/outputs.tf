@@ -45,7 +45,7 @@ output "vpc_id" {
 }
 
 output "shared_s3_bucket" {
-  value       = aws_s3_bucket.platform_storage.bucket
+  value       = aws_s3_bucket.velero.bucket
   description = "Shared S3 bucket — holds Terraform state (terraform/) and Velero backups (velero/)"
 }
 
@@ -59,7 +59,7 @@ output "velero_install_command" {
     velero install \
       --provider aws \
       --plugins velero/velero-plugin-for-aws:v1.9.0 \
-      --bucket ${aws_s3_bucket.platform_storage.bucket} \
+      --bucket ${aws_s3_bucket.velero.bucket} \
       --backup-location-config region=${var.aws_region},prefix=velero \
       --snapshot-location-config region=${var.aws_region} \
       --service-account-annotations eks.amazonaws.com/role-arn=${aws_iam_role.velero.arn} \

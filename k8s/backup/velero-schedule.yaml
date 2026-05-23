@@ -5,15 +5,14 @@
 # This means if your cluster is destroyed, you can restore everything from S3.
 #
 # INSTALL VELERO (run once after terraform apply):
-#   1. Get the bucket name:
-#        terraform -chdir=terraform/eks output shared_s3_bucket
-#        # → payday-platform-YOUR_ACCOUNT_ID
-#   2. Install Velero CLI: https://velero.io/docs/latest/basic-install/
-#   3. Install Velero in cluster (copy the exact command from terraform output):
+#   1. Install Velero CLI: https://velero.io/docs/latest/basic-install/
+#   2. Get the exact install command from Terraform:
+#        terraform -chdir=terraform/eks output velero_install_command
+#   3. Or run directly:
 #        velero install \
 #          --provider aws \
 #          --plugins velero/velero-plugin-for-aws:v1.9.0 \
-#          --bucket payday-platform-YOUR_ACCOUNT_ID \
+#          --bucket payday-cluster-velero-backups-207717182270 \
 #          --backup-location-config region=us-east-1,prefix=velero \
 #          --snapshot-location-config region=us-east-1 \
 #          --service-account-annotations eks.amazonaws.com/role-arn=YOUR_ROLE_ARN \

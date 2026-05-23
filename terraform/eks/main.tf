@@ -296,29 +296,22 @@ resource "aws_db_instance" "payday" {
   }
 }
 
-# ── Shared S3 Bucket (Terraform state + Velero backups) ───────────────────────
-# Single bucket with prefix-based separation:
+# ── S3 Bucket for Velero Backups + Terraform State ───────────────────────────
+# Single bucket, prefix-based separation:
 #   terraform/eks/terraform.tfstate  — Terraform remote state
 #   velero/                          — Velero cluster backups
-#
-# Bootstrap (run once before terraform init):
-#   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-#   aws s3 mb s3://payday-platform-${ACCOUNT} --region us-east-1
-#   aws s3api put-bucket-versioning \
-#     --bucket payday-platform-${ACCOUNT} \
-#     --versioning-configuration Status=Enabled
-resource "aws_s3_bucket" "platform_storage" {
-  bucket        = "payday-platform-${data.aws_caller_identity.current.account_id}"
+resource "aws_s3_bucket" "velero" {
+  bucket        = "${var.cluster_name}-velero-backups-${data.aws_caller_identity.current.account_id}"
   force_destroy = false
 
   tags = {
-    Name    = "payday-platform-storage"
+    Name    = "${var.cluster_name}-velero-backups"
     Purpose = "terraform-state-and-velero-backups"
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "platform_storage" {
-  bucket = aws_s3_bucket.platform_storage.id
+resource "aws_s3_bucket_public_access_block" "velero" {
+  bucket = aws_s3_bucket.velero.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -326,8 +319,8 @@ resource "aws_s3_bucket_public_access_block" "platform_storage" {
   restrict_public_buckets = true
 }
 
-resource "aws_s3_bucket_server_side_encryption_configuration" "platform_storage" {
-  bucket = aws_s3_bucket.platform_storage.id
+resource "aws_s3_bucket_server_side_encryption_configuration" "velero" {
+  bucket = aws_s3_bucket.velero.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -338,8 +331,8 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "platform_storage"
 
 # Versioning is required for Terraform state — lets you recover from accidental
 # state corruption or deletion by rolling back to a previous version.
-resource "aws_s3_bucket_versioning" "platform_storage" {
-  bucket = aws_s3_bucket.platform_storage.id
+resource "aws_s3_bucket_versioning" "velero" {
+  bucket = aws_s3_bucket.velero.id
   versioning_configuration {
     status = "Enabled"
   }
@@ -347,9 +340,9 @@ resource "aws_s3_bucket_versioning" "platform_storage" {
 
 # Expire only velero/ objects after 90 days — Terraform state must never be
 # auto-deleted, so the lifecycle rule is scoped to the velero/ prefix only.
-resource "aws_s3_bucket_lifecycle_configuration" "platform_storage" {
-  bucket = aws_s3_bucket.platform_storage.id
-  depends_on = [aws_s3_bucket_versioning.platform_storage]
+resource "aws_s3_bucket_lifecycle_configuration" "velero" {
+  bucket     = aws_s3_bucket.velero.id
+  depends_on = [aws_s3_bucket_versioning.velero]
 
   rule {
     id     = "expire-old-velero-backups"
@@ -404,12 +397,12 @@ resource "aws_iam_policy" "velero" {
           "s3:AbortMultipartUpload",
           "s3:ListMultipartUploadParts"
         ]
-        Resource = "${aws_s3_bucket.platform_storage.arn}/velero/*"
+        Resource = "${aws_s3_bucket.velero.arn}/velero/*"
       },
       {
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]
-        Resource = aws_s3_bucket.platform_storage.arn
+        Resource = aws_s3_bucket.velero.arn
       },
       {
         Effect = "Allow"

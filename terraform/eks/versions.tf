@@ -17,24 +17,21 @@ terraform {
     }
   }
 
-  # Remote state stored in the shared S3 bucket alongside Velero backups.
-  # Bootstrap: create the bucket and DynamoDB table ONCE before running terraform init:
-  #   ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
-  #   aws s3 mb s3://payday-platform-${ACCOUNT} --region us-east-1
+  # State stored in the same bucket Velero already uses.
+  # The bucket already exists — run these two commands first, then terraform init -migrate-state:
+  #
   #   aws s3api put-bucket-versioning \
-  #     --bucket payday-platform-${ACCOUNT} \
+  #     --bucket payday-cluster-velero-backups-207717182270 \
   #     --versioning-configuration Status=Enabled
+  #
   #   aws dynamodb create-table \
   #     --table-name payday-terraform-lock \
   #     --attribute-definitions AttributeName=LockID,AttributeType=S \
   #     --key-schema AttributeName=LockID,KeyType=HASH \
   #     --billing-mode PAY_PER_REQUEST \
   #     --region us-east-1
-  #
-  # Then replace YOUR_ACCOUNT_ID below with your actual account ID and run:
-  #   terraform init -migrate-state
   backend "s3" {
-    bucket         = "payday-platform-YOUR_ACCOUNT_ID"
+    bucket         = "payday-cluster-velero-backups-207717182270"
     key            = "terraform/eks/terraform.tfstate"
     region         = "us-east-1"
     dynamodb_table = "payday-terraform-lock"
