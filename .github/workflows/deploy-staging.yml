@@ -156,40 +156,59 @@ jobs:
         run: |
           echo "Running smoke tests..."
 
-          # Spin up a curl pod inside the cluster — reaches services via K8s DNS,
-          # no port-forwarding needed (port-forward is for interactive use, not CI).
+          # Clean up any leftover pod from a previous run
+          kubectl delete pod smoke-test -n staging --ignore-not-found=true
+
           kubectl run smoke-test --image=curlimages/curl:8.7.1 \
             --restart=Never -n staging \
-            --command -- sleep 60
+            --command -- sleep 120
 
           kubectl wait --for=condition=Ready pod/smoke-test \
             -n staging --timeout=60s
 
-          # Test payments-api health
-          HTTP=$(kubectl exec -n staging smoke-test -- \
-            curl -s -o /dev/null -w "%{http_code}" http://payments-api:8082/health)
+          # Show pod and endpoint status so failures are easy to diagnose
+          echo "--- Pods ---"
+          kubectl get pods -n staging
+          echo "--- Endpoints ---"
+          kubectl get endpoints -n staging
+
+          # Helper: retries curl up to 6 times (30s total) to allow pods a moment
+          # to settle after rollout. Captures HTTP code; returns 000 on failure.
+          check_health() {
+            local url=$1
+            local code="000"
+            for i in 1 2 3 4 5 6; do
+              code=$(kubectl exec -n staging smoke-test -- \
+                curl -s -o /dev/null -w "%{http_code}" --max-time 5 "$url" 2>/dev/null) || code="000"
+              [ "$code" = "200" ] && echo "200" && return
+              echo "  attempt $i: got $code, retrying in 5s..." >&2
+              sleep 5
+            done
+            echo "$code"
+          }
+
+          HTTP=$(check_health http://payments-api:8082/health)
           if [ "$HTTP" != "200" ]; then
             echo "FAIL: payments-api health returned $HTTP"
+            kubectl logs -l app=payments-api -n staging --tail=30
             kubectl delete pod smoke-test -n staging --ignore-not-found=true
             exit 1
           fi
           echo "✓ payments-api health OK"
 
-          # Test auth-api health
-          HTTP=$(kubectl exec -n staging smoke-test -- \
-            curl -s -o /dev/null -w "%{http_code}" http://auth-api:8081/health)
+          HTTP=$(check_health http://auth-api:8081/health)
           if [ "$HTTP" != "200" ]; then
             echo "FAIL: auth-api health returned $HTTP"
+            kubectl logs -l app=auth-api -n staging --tail=30
             kubectl delete pod smoke-test -n staging --ignore-not-found=true
             exit 1
           fi
           echo "✓ auth-api health OK"
 
-          # Test login endpoint
           LOGIN=$(kubectl exec -n staging smoke-test -- \
             curl -s -X POST http://auth-api:8081/auth/login \
             -H "Content-Type: application/json" \
-            -d '{"username":"admin","password":"password123"}')
+            -d '{"username":"admin","password":"password123"}') || LOGIN=""
           if echo "$LOGIN" | grep -q "token"; then
             echo "✓ Login endpoint works"
           else
