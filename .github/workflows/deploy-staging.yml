@@ -130,14 +130,19 @@ jobs:
       - name: Apply resource quotas
         run: kubectl apply -f k8s/autoscaling/resource-quotas.yaml
 
+      - name: Show pod status
+        run: kubectl get pods -n staging
+
       - name: Wait for rollouts to complete
         run: |
-          echo "Waiting for staging deployments to be ready..."
-          kubectl rollout status deployment/auth-api     -n staging --timeout=180s
-          kubectl rollout status deployment/payments-api -n staging --timeout=180s
-          kubectl rollout status deployment/worker       -n staging --timeout=180s
-          kubectl rollout status deployment/frontend     -n staging --timeout=180s
+          echo "Waiting for all deployments in parallel..."
+          kubectl rollout status deployment/auth-api     -n staging --timeout=300s &
+          kubectl rollout status deployment/payments-api -n staging --timeout=300s &
+          kubectl rollout status deployment/worker       -n staging --timeout=300s &
+          kubectl rollout status deployment/frontend     -n staging --timeout=300s &
+          wait $(jobs -p)
           echo "All deployments ready!"
+          kubectl get pods -n staging
 
       - name: Run smoke tests
         run: |
