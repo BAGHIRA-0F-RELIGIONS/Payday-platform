@@ -40,8 +40,6 @@ spec:
         app: postgres
         tier: database
     spec:
-      securityContext:
-        fsGroup: 70  # Alpine postgres GID — gives the mounted volume correct group ownership
       containers:
         - name: postgres
           image: postgres:16-alpine

@@ -107,8 +107,12 @@ jobs:
       # For staging: use in-cluster PostgreSQL (not RDS, to save costs in staging)
       - name: Deploy database to staging
         run: |
-          # Delete the old PVC if it exists — required when securityContext/ownership changed.
-          # Staging has no persistent data worth keeping; fresh init is always safe here.
+          # Scale StatefulSet to 0 first so the pod releases the PVC.
+          # Without this, kubectl delete pvc hangs forever (pvc-protection finalizer).
+          kubectl scale statefulset/postgres --replicas=0 -n staging 2>/dev/null || true
+          kubectl wait --for=delete pod/postgres-0 -n staging --timeout=90s 2>/dev/null || true
+
+          # PVC is now unbound — safe to delete and recreate fresh.
           kubectl delete pvc postgres-pvc -n staging --ignore-not-found=true
 
           kubectl apply -f k8s/database/postgres-statefulset.yaml --namespace staging
