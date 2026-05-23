@@ -183,8 +183,12 @@ jobs:
         if: failure()
         run: |
           echo "Rolling back staging..."
-          kubectl rollout undo deployment/auth-api     -n staging
-          kubectl rollout undo deployment/payments-api -n staging
-          kubectl rollout undo deployment/worker       -n staging
-          kubectl rollout undo deployment/frontend     -n staging
+          if ! kubectl get namespace staging 2>/dev/null; then
+            echo "Staging namespace does not exist — nothing to roll back"
+            exit 0
+          fi
+          kubectl rollout undo deployment/auth-api     -n staging 2>/dev/null || true
+          kubectl rollout undo deployment/payments-api -n staging 2>/dev/null || true
+          kubectl rollout undo deployment/worker       -n staging 2>/dev/null || true
+          kubectl rollout undo deployment/frontend     -n staging 2>/dev/null || true
           echo "Rollback complete."
